@@ -1,0 +1,419 @@
+/* ==========================================================================
+   Interactive Gantt / Timeline View Styles
+   ========================================================================== */
+
+.gantt-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.gantt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-glass);
+  backdrop-filter: var(--glass-blur);
+  z-index: 5;
+}
+
+.gantt-toolbar-left, .gantt-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.view-mode-toggle {
+  display: flex;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  border: 1px solid var(--border-color);
+}
+
+.view-mode-btn {
+  padding: 0.3rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.view-mode-btn.active {
+  background: var(--primary);
+  color: white;
+  box-shadow: 0 1px 4px var(--primary-glow);
+}
+
+.gantt-main-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Left Fixed Columns: Task Names, Assignee, Duration */
+.gantt-tree-pane {
+  width: 380px;
+  min-width: 320px;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 4;
+}
+
+.gantt-tree-header {
+  height: 48px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  display: grid;
+  grid-template-columns: 32px 1fr 100px 70px;
+  align-items: center;
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gantt-tree-body {
+  flex: 1;
+  overflow-y: hidden; /* Synced with timeline scroll */
+  display: flex;
+  flex-direction: column;
+}
+
+.gantt-tree-row {
+  height: 44px;
+  border-bottom: 1px solid var(--border-color);
+  display: grid;
+  grid-template-columns: 32px 1fr 100px 70px;
+  align-items: center;
+  padding: 0 0.75rem;
+  font-size: 0.82rem;
+  transition: background var(--transition-fast);
+  cursor: pointer;
+}
+
+.gantt-tree-row:hover {
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.gantt-tree-row.selected {
+  background: var(--primary-light);
+}
+
+.gantt-tree-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.gantt-tree-assignee {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+.gantt-tree-effort {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: #93c5fd;
+  text-align: right;
+  padding-right: 0.5rem;
+}
+
+/* Right Scrollable Timeline Canvas */
+.gantt-timeline-pane {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  background: var(--bg-primary);
+}
+
+.gantt-timeline-header-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.gantt-scale-months {
+  height: 22px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.gantt-month-cell {
+  display: flex;
+  align-items: center;
+  padding-left: 0.5rem;
+  border-right: 1px solid var(--border-color);
+}
+
+.gantt-scale-days {
+  height: 26px;
+  display: flex;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.gantt-day-cell {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--border-color);
+  font-family: var(--font-mono);
+}
+
+.gantt-day-cell.weekend {
+  background: rgba(0, 0, 0, 0.15);
+  color: var(--text-muted);
+}
+
+.gantt-day-cell.holiday {
+  background: rgba(236, 72, 153, 0.22);
+  color: #f472b6;
+  font-weight: 700;
+  border-bottom: 2px solid var(--critical);
+}
+
+.gantt-day-cell.today {
+  background: var(--primary-light);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+/* Timeline Rows & Task Bars */
+.gantt-timeline-content {
+  position: relative;
+  min-height: 100%;
+}
+
+.gantt-grid-columns {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+.gantt-grid-col {
+  flex-shrink: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.gantt-grid-col.weekend {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.gantt-grid-col.holiday {
+  background: rgba(236, 72, 153, 0.08);
+  border-right: 1px dashed rgba(236, 72, 153, 0.35);
+}
+
+.gantt-grid-col.today-col {
+  border-right: 2px solid var(--primary);
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.gantt-timeline-rows {
+  position: relative;
+  z-index: 2;
+}
+
+.gantt-bar-row {
+  height: 44px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.gantt-bar-row:hover {
+  background: rgba(99, 102, 241, 0.03);
+}
+
+/* The Interactive Task Bar */
+.gantt-task-bar {
+  position: absolute;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  padding: 0 0.5rem;
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  user-select: none;
+}
+
+.gantt-task-bar:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--primary-glow);
+  z-index: 5;
+}
+
+.gantt-task-bar.critical-path {
+  border: 1.5px solid #f43f5e;
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.4);
+}
+
+.gantt-task-bar.target-missed-bar {
+  border: 1.5px dashed #f87171 !important;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.4);
+}
+
+.gantt-task-bar.critical-path::after {
+  content: '⚡ Critical';
+  position: absolute;
+  right: 6px;
+  font-size: 0.65rem;
+  color: #ffe4e6;
+  opacity: 0.9;
+}
+
+.gantt-task-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+}
+
+.gantt-task-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-task-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-task-hours {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* SVG Dependency Overlay */
+.gantt-svg-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+.dep-line {
+  fill: none;
+  stroke: #818cf8;
+  stroke-width: 2;
+  stroke-dasharray: 4, 3;
+  transition: stroke 0.2s, stroke-width 0.2s;
+}
+
+.dep-line:hover, .dep-line.highlighted {
+  stroke: #c084fc;
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
+
+.dep-line.critical {
+  stroke: #f43f5e;
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+  filter: drop-shadow(0 0 3px rgba(244, 63, 94, 0.6));
+}
+
+/* Task Tooltip */
+.gantt-tooltip {
+  position: fixed;
+  z-index: 150;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  pointer-events: none;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  max-width: 300px;
+  display: none;
+  backdrop-filter: var(--glass-blur);
+}
+
+.gantt-tooltip.visible {
+  display: block;
+}
+
+.tooltip-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin-bottom: 0.3rem;
+}
+
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.2rem;
+}
+
+.tooltip-val {
+  font-weight: 600;
+  color: var(--text-primary);
+}
