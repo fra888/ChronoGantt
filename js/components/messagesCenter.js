@@ -29,10 +29,26 @@ export class MessagesCenter {
     this.countCritical = document.getElementById('countFilterCritical');
     this.countInfo = document.getElementById('countFilterInfo');
 
-    this.openBtn?.addEventListener('click', () => this.open());
+    this.refreshBtn = document.getElementById('btnRefreshMessages');
+
+    this.openBtn?.addEventListener('click', (e) => {
+      e?.preventDefault();
+      this.open();
+    });
     this.closeBtn?.addEventListener('click', () => this.close());
+    this.refreshBtn?.addEventListener('click', () => {
+      this.update();
+      this.renderMessagesList();
+    });
     this.overlay?.addEventListener('click', (e) => {
       if (e.target === this.overlay) this.close();
+    });
+
+    // Close on Escape key
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.overlay?.classList.contains('active')) {
+        this.close();
+      }
     });
 
     document.querySelectorAll('.drawer-filter-btn').forEach(btn => {
@@ -45,11 +61,13 @@ export class MessagesCenter {
     });
 
     this.update();
+    this.renderMessagesList();
   }
 
   open() {
-    this.update();
     this.overlay?.classList.add('active');
+    this.update();
+    this.renderMessagesList();
   }
 
   close() {
@@ -77,7 +95,7 @@ export class MessagesCenter {
     const allCalendars = this.store.getAllCalendars();
     const scheduled = ScheduleEngine.computeSchedule(tasks, resources, projects, calendar, allCalendars);
     const taskMap = new Map(scheduled.map(t => [t.id, t]));
-    const workloads = ScheduleEngine.calculateResourceWorkload(tasks, resources, projects, calendar, allCalendars);
+    const workloads = ScheduleEngine.calculateResourceWorkload(scheduled, resources, projects, calendar, allCalendars);
 
     // 1. Check for Resource Over-allocations
     workloads.forEach(w => {
@@ -215,7 +233,25 @@ export class MessagesCenter {
       });
     });
 
-    // 5. System Notices & Healthy Status
+    // 5. Solved & Leveled Schedule Status
+    if (typeof this.store.hasSolveBackup === 'function' && this.store.hasSolveBackup()) {
+      list.push({
+        id: 'info-leveled-active',
+        type: 'info',
+        category: 'Leveled Schedule',
+        icon: '⚡',
+        title: 'Auto-Leveled Schedule Active',
+        desc: 'Task end dates and daily burn rates are currently leveled to reach deadlines without exceeding 100% team capacity.',
+        actionText: 'Revert Schedule',
+        onAction: () => {
+          this.close();
+          const btnRevert = document.getElementById('btnRevertSchedule');
+          btnRevert?.click();
+        }
+      });
+    }
+
+    // 6. System Notices & Healthy Status
     list.push({
       id: 'info-status-summary',
       type: 'info',

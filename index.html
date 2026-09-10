@@ -11,10 +11,14 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  
   <!-- Stylesheets -->
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/gantt.css">
-  <link rel="stylesheet" href="css/kanban.css">
+  <link rel="stylesheet" href="css/style.css?v=2">
+  <link rel="stylesheet" href="css/gantt.css?v=2">
+  <link rel="stylesheet" href="css/kanban.css?v=2">
 </head>
 <body>
   <div class="app-container">
@@ -184,6 +188,21 @@
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
             <span>Export JSON</span>
+          </button>
+
+          <button class="btn" id="btnSolveSchedule" title="Auto-solve: extend task end dates to reach deadlines without people over 100% capacity" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #ffffff; font-weight: 600; border: none; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35); cursor: pointer;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span>Solve</span>
+          </button>
+
+          <button class="btn btn-secondary" id="btnRevertSchedule" title="Revert schedule to state before Solve" style="display: none; border-color: rgba(244, 63, 94, 0.4); color: #f43f5e; cursor: pointer;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <polyline points="1 4 1 10 7 10"></polyline>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+            </svg>
+            <span>Revert</span>
           </button>
 
           <button class="btn btn-secondary" id="btnAddResourceBtn">
@@ -631,7 +650,12 @@
             <span style="font-size: 0.72rem; color: var(--text-muted);">Active bottlenecks, over-allocations & notifications</span>
           </div>
         </div>
-        <button class="modal-close" id="closeMessagesDrawerBtn">&times;</button>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <button class="btn btn-secondary btn-sm" id="btnRefreshMessages" title="Refresh messages" style="padding: 0.25rem 0.6rem; font-size: 0.74rem; cursor: pointer;">
+            🔄 Refresh
+          </button>
+          <button class="modal-close" id="closeMessagesDrawerBtn">&times;</button>
+        </div>
       </div>
 
       <div class="drawer-filter-bar">
@@ -651,6 +675,6 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <!-- Main Application Script -->
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=2"></script>
 </body>
 </html>

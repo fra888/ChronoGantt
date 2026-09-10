@@ -1,5 +1,8 @@
 # ChronoGantt
+
+
 An advanced Gantt managment, written entirely in html/javascript, written entirely with AI
+
 ================================================================================
                                 CHRONOGANTT
          Interactive Project, Resource & Schedule Management Platform
@@ -35,11 +38,23 @@ this program. If not, see <https://www.gnu.org/licenses/>.
 --------------------------------------------------------------------------------
 3. KEY FEATURES
 --------------------------------------------------------------------------------
-- Interactive Gantt Timeline:
-  * Dynamic day/month zoom scale with smooth horizontal scrolling.
-  * Real-time SVG dependency connectors and arrows.
-  * Critical Path Method (CPM) calculation with zero-slack bottleneck detection.
+- Interactive Gantt & Timeline View:
+  * Interactive Gantt chart with day-by-day and compact weekly zoom scales.
+  * Hierarchical Timeline Grouping: Group tasks by "Project & Assignee" (default),
+    "Project", "Assignee", or "None (Flat)".
+  * Collapsible project & assignee headers with live task counters and total effort.
+  * Project summary bracket bars and assignee span tracks on the timeline canvas.
+  * SVG dependency connector lines with arrowheads and critical path highlights.
   * Target End Date tracking with overdue indicator badges (⚠️).
+  * Bidirectional synchronized scrolling between task list and timeline canvas.
+
+- Auto-Solve Schedule & Leveling Engine:
+  * "Solve" button: Automatically extends the end dates of every task across the
+    available project timeline to reach target deadlines without any resource
+    exceeding 100% daily capacity and without missing deadlines.
+  * Paces work effort evenly along dependency chains to eliminate peak crunch.
+  * "Revert" button: Instant one-click restoration back to the original schedule
+    dates and pacing.
 
 - Multi-Assignee & Effort Calculation:
   * Assign multiple team members to a single subtask.
@@ -96,14 +111,19 @@ server rather than opened directly via file://.
 
 You can launch a local HTTP server using any of the following methods:
 
-Option A (Python 3):
+Option A (Included No-Cache Server):
+    python3 server.py
+    Then open http://localhost:8085 in your browser.
+
+Option B (Python built-in module):
     python3 -m http.server 8085
     Then open http://localhost:8085 in your browser.
 
-Option B (Node.js):
+Option C (Node.js):
     npx serve .
     or
     npx http-server -p 8085
 
-Option C (PHP):
+Option D (PHP):
     php -S localhost:8085
+

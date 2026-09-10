@@ -1,12 +1,15 @@
 /**
  * Interactive Gantt Chart View
  * - Render timeline tracks & days
- * - Task bars with man-hours and progress
+ * - Group by Project, Assignee, Project & Assignee, or None (Flat)
+ * - Task bars with man-hours, progress, and daily pacing indicators
  * - Dynamic curved SVG dependency connectors with arrowheads
+ * - Project summary bracket bars and Assignee span tracks
  * - Critical path visual highlight
  * - Tooltip with detailed task metrics
+ * - Synchronized bidirectional scrolling between tree pane and timeline
  */
-import { ScheduleEngine } from '../engine.js';
+import { ScheduleEngine } from '../engine.js?v=2';
 
 export class GanttView {
   constructor(container, store, onEditTask) {
@@ -14,8 +17,12 @@ export class GanttView {
     this.store = store;
     this.onEditTask = onEditTask;
     this.viewScale = 'day'; // 'day' | 'week'
+    this.groupBy = 'project_assignee'; // 'project_assignee' | 'project' | 'assignee' | 'none'
+    this.collapsedGroups = new Set();
     this.colWidth = 42; // px per day in day view
-    this.rowHeight = 44; // px per row
+    this.rowHeight = 44; // px per task row
+    this.projectHeaderHeight = 38; // px for project header
+    this.assigneeHeaderHeight = 34; // px for assignee header
     this.tooltipEl = null;
 
     this.initTooltip();
@@ -36,6 +43,206 @@ export class GanttView {
     this.viewScale = scale;
     this.colWidth = scale === 'week' ? 20 : 42;
     this.render();
+  }
+
+  setGroupBy(groupBy) {
+    this.groupBy = groupBy;
+    this.render();
+  }
+
+  toggleGroupCollapse(groupId) {
+    if (this.collapsedGroups.has(groupId)) {
+      this.collapsedGroups.delete(groupId);
+    } else {
+      this.collapsedGroups.add(groupId);
+    }
+    this.render();
+  }
+
+  getTaskAssigneesInfo(task, resourceMap) {
+    const ids = Array.isArray(task.assignedResourceIds) && task.assignedResourceIds.length > 0
+      ? task.assignedResourceIds
+      : (task.assignedResourceId ? [task.assignedResourceId] : []);
+    const assignees = ids.map(id => resourceMap.get(id)).filter(Boolean);
+
+    if (assignees.length === 0) {
+      return {
+        key: 'unassigned',
+        label: 'Unassigned',
+        assignees: [],
+        isMulti: false
+      };
+    }
+    if (assignees.length === 1) {
+      return {
+        key: `res-${assignees[0].id}`,
+        label: assignees[0].name,
+        assignees,
+        isMulti: false
+      };
+    }
+    return {
+      key: `multi-${ids.slice().sort().join('-')}`,
+      label: assignees.map(a => a.name.split(' ')[0]).join(' & '),
+      fullLabel: assignees.map(a => a.name).join(', '),
+      assignees,
+      isMulti: true
+    };
+  }
+
+  computeGroupMetrics(tasks) {
+    if (!tasks || tasks.length === 0) {
+      const now = new Date();
+      return { minStart: now, maxEnd: now, totalHours: 0 };
+    }
+    const minStart = new Date(Math.min(...tasks.map(t => t.computedStartDate.getTime())));
+    const maxEnd = new Date(Math.max(...tasks.map(t => t.computedEndDate.getTime())));
+    const totalHours = tasks.reduce((sum, t) => sum + (Number(t.durationHours) || 0), 0);
+    return { minStart, maxEnd, totalHours };
+  }
+
+  buildDisplayRows(scheduledTasks, projectMap, resourceMap) {
+    const rows = [];
+
+    // Mode 1: Flat List (None)
+    if (this.groupBy === 'none') {
+      scheduledTasks.forEach((task, idx) => {
+        rows.push({ type: 'task', id: task.id, task, level: 0, index: idx + 1 });
+      });
+      return rows;
+    }
+
+    // Mode 2: Group by Project
+    if (this.groupBy === 'project') {
+      const projectGroups = new Map();
+      scheduledTasks.forEach(task => {
+        if (!projectGroups.has(task.projectId)) projectGroups.set(task.projectId, []);
+        projectGroups.get(task.projectId).push(task);
+      });
+
+      let taskIndex = 1;
+      projectGroups.forEach((tasks, projId) => {
+        const proj = projectMap.get(projId) || { id: projId, name: 'Untitled Project', color: '#6366f1' };
+        const groupId = `proj-${projId}`;
+        const isCollapsed = this.collapsedGroups.has(groupId);
+        const metrics = this.computeGroupMetrics(tasks);
+
+        rows.push({
+          type: 'project-header',
+          groupId,
+          id: groupId,
+          project: proj,
+          tasks,
+          isCollapsed,
+          ...metrics
+        });
+
+        if (!isCollapsed) {
+          tasks.forEach(task => {
+            rows.push({ type: 'task', id: task.id, task, level: 1, index: taskIndex++ });
+          });
+        }
+      });
+      return rows;
+    }
+
+    // Mode 3: Group by Assignee
+    if (this.groupBy === 'assignee') {
+      const assigneeGroups = new Map();
+      scheduledTasks.forEach(task => {
+        const aInfo = this.getTaskAssigneesInfo(task, resourceMap);
+        if (!assigneeGroups.has(aInfo.key)) {
+          assigneeGroups.set(aInfo.key, { info: aInfo, tasks: [] });
+        }
+        assigneeGroups.get(aInfo.key).tasks.push(task);
+      });
+
+      let taskIndex = 1;
+      assigneeGroups.forEach(({ info, tasks }, aKey) => {
+        const groupId = `assignee-${aKey}`;
+        const isCollapsed = this.collapsedGroups.has(groupId);
+        const metrics = this.computeGroupMetrics(tasks);
+
+        rows.push({
+          type: 'assignee-header',
+          groupId,
+          id: groupId,
+          assigneeInfo: info,
+          tasks,
+          isCollapsed,
+          ...metrics
+        });
+
+        if (!isCollapsed) {
+          tasks.forEach(task => {
+            rows.push({ type: 'task', id: task.id, task, level: 1, index: taskIndex++ });
+          });
+        }
+      });
+      return rows;
+    }
+
+    // Mode 4: Group by Project AND Assignee (Default)
+    const projectGroups = new Map();
+    scheduledTasks.forEach(task => {
+      if (!projectGroups.has(task.projectId)) projectGroups.set(task.projectId, []);
+      projectGroups.get(task.projectId).push(task);
+    });
+
+    let taskIndex = 1;
+    projectGroups.forEach((projTasks, projId) => {
+      const proj = projectMap.get(projId) || { id: projId, name: 'Untitled Project', color: '#6366f1' };
+      const projGroupId = `proj-${projId}`;
+      const isProjCollapsed = this.collapsedGroups.has(projGroupId);
+      const projMetrics = this.computeGroupMetrics(projTasks);
+
+      rows.push({
+        type: 'project-header',
+        groupId: projGroupId,
+        id: projGroupId,
+        project: proj,
+        tasks: projTasks,
+        isCollapsed: isProjCollapsed,
+        ...projMetrics
+      });
+
+      if (!isProjCollapsed) {
+        // Sub-group by assignee within this project
+        const assigneeSubgroups = new Map();
+        projTasks.forEach(task => {
+          const aInfo = this.getTaskAssigneesInfo(task, resourceMap);
+          if (!assigneeSubgroups.has(aInfo.key)) {
+            assigneeSubgroups.set(aInfo.key, { info: aInfo, tasks: [] });
+          }
+          assigneeSubgroups.get(aInfo.key).tasks.push(task);
+        });
+
+        assigneeSubgroups.forEach(({ info, tasks: subTasks }, aKey) => {
+          const assigneeGroupId = `proj-${projId}-assignee-${aKey}`;
+          const isAssigneeCollapsed = this.collapsedGroups.has(assigneeGroupId);
+          const aMetrics = this.computeGroupMetrics(subTasks);
+
+          rows.push({
+            type: 'assignee-header',
+            groupId: assigneeGroupId,
+            id: assigneeGroupId,
+            assigneeInfo: info,
+            project: proj,
+            tasks: subTasks,
+            isCollapsed: isAssigneeCollapsed,
+            ...aMetrics
+          });
+
+          if (!isAssigneeCollapsed) {
+            subTasks.forEach(task => {
+              rows.push({ type: 'task', id: task.id, task, level: 2, index: taskIndex++ });
+            });
+          }
+        });
+      }
+    });
+
+    return rows;
   }
 
   render() {
@@ -123,6 +330,46 @@ export class GanttView {
       monthGroups.push({ name: currentMonth, daysCount: monthDayCount });
     }
 
+    // Generate rows list (grouped or flat)
+    const displayRows = this.buildDisplayRows(scheduledTasks, projectMap, resourceMap);
+
+    // Calculate total height of timeline canvas
+    const totalTimelineHeight = displayRows.reduce((sum, row) => {
+      if (row.type === 'project-header') return sum + this.projectHeaderHeight;
+      if (row.type === 'assignee-header') return sum + this.assigneeHeaderHeight;
+      return sum + this.rowHeight;
+    }, 0);
+
+    const dayMs = 1000 * 60 * 60 * 24;
+
+    // Helper to render assignee avatars in tree
+    const renderAssigneesPill = (assignees) => {
+      if (!assignees || assignees.length === 0) {
+        return '<span style="color: var(--text-muted); font-style: italic;">Unassigned</span>';
+      }
+      if (assignees.length === 1) {
+        const r = assignees[0];
+        return `
+          <span class="avatar-pill" style="background: ${r.avatarColor}; width: 18px; height: 18px; font-size: 0.6rem;">
+            ${r.name.split(' ').map(n => n[0]).join('')}
+          </span>
+          <span style="overflow: hidden; text-overflow: ellipsis;">${escapeHtml(r.name.split(' ')[0])}</span>
+        `;
+      }
+      return `
+        <div style="display: flex; align-items: center;" title="${assignees.map(a => a.name).join(', ')}">
+          <div style="display: flex; margin-right: 0.25rem;">
+            ${assignees.slice(0, 3).map((r, i) => `
+              <span class="avatar-pill" style="background: ${r.avatarColor}; width: 16px; height: 16px; font-size: 0.54rem; margin-left: ${i > 0 ? '-5px' : '0'}; border: 1px solid var(--bg-surface);" title="${escapeHtml(r.name)}">
+                ${r.name.split(' ').map(n => n[0]).join('')}
+              </span>
+            `).join('')}
+          </div>
+          <span style="font-size: 0.7rem; font-weight: 600; color: var(--accent-primary);">${assignees.length}p</span>
+        </div>
+      `;
+    };
+
     // Construct UI Shell
     this.container.innerHTML = `
       <div class="gantt-wrapper">
@@ -134,6 +381,16 @@ export class GanttView {
             </span>
           </div>
           <div class="gantt-toolbar-right">
+            <div style="display: flex; align-items: center; gap: 0.4rem; margin-right: 0.5rem;">
+              <span class="filter-label" style="font-size: 0.74rem; color: var(--text-muted); font-weight: 600;">Group by:</span>
+              <select class="select-filter" id="ganttGroupBySelect" style="padding: 0.25rem 0.6rem; font-size: 0.76rem; border-radius: var(--radius-sm); cursor: pointer;">
+                <option value="project_assignee" ${this.groupBy === 'project_assignee' ? 'selected' : ''}>Project & Assignee</option>
+                <option value="project" ${this.groupBy === 'project' ? 'selected' : ''}>Project</option>
+                <option value="assignee" ${this.groupBy === 'assignee' ? 'selected' : ''}>Assignee</option>
+                <option value="none" ${this.groupBy === 'none' ? 'selected' : ''}>None (Flat)</option>
+              </select>
+            </div>
+
             <span class="filter-label">Scale:</span>
             <div class="view-mode-toggle">
               <button class="view-mode-btn ${this.viewScale === 'day' ? 'active' : ''}" id="scaleDayBtn">Days</button>
@@ -152,48 +409,79 @@ export class GanttView {
               <span style="text-align: right; padding-right: 0.5rem;">Effort</span>
             </div>
             <div class="gantt-tree-body" id="ganttTreeBody">
-              ${scheduledTasks.map((task, idx) => {
-                const res = resourceMap.get(task.assignedResourceId);
+              ${displayRows.map((row) => {
+                if (row.type === 'project-header') {
+                  return `
+                    <div class="gantt-group-header-row gantt-project-header" data-group-id="${row.groupId}" style="border-left-color: ${row.project.color || 'var(--primary)'};">
+                      <span class="gantt-group-chevron ${row.isCollapsed ? 'collapsed' : ''}">▼</span>
+                      <span class="project-color-dot" style="background: ${row.project.color || '#6366f1'}; width: 10px; height: 10px;"></span>
+                      <span class="gantt-group-title" title="${escapeHtml(row.project.name)}">
+                        ${escapeHtml(row.project.name)}
+                      </span>
+                      <div class="gantt-group-meta">
+                        <span class="badge" style="font-size: 0.68rem; background: rgba(99, 102, 241, 0.15); color: #a5b4fc;">
+                          ${row.tasks.length} task${row.tasks.length === 1 ? '' : 's'}
+                        </span>
+                        <span style="font-family: var(--font-mono); color: #93c5fd; font-size: 0.72rem; font-weight: 600;">
+                          ${row.totalHours}h
+                        </span>
+                        ${row.project.targetDate ? `
+                          <span title="Project Target Deadline: ${row.project.targetDate}" style="font-size: 0.68rem; color: #34d399; font-weight: 600;">
+                            🎯 ${row.project.targetDate.slice(5)}
+                          </span>
+                        ` : ''}
+                      </div>
+                    </div>
+                  `;
+                }
+
+                if (row.type === 'assignee-header') {
+                  const assignees = row.assigneeInfo.assignees;
+                  return `
+                    <div class="gantt-group-header-row gantt-assignee-header" data-group-id="${row.groupId}">
+                      <span class="gantt-group-chevron ${row.isCollapsed ? 'collapsed' : ''}">▼</span>
+                      <div style="display: flex; align-items: center; gap: 0.35rem;">
+                        ${assignees.length === 0 ? `
+                          <span style="font-size: 0.8rem;">👤</span>
+                        ` : assignees.map(a => `
+                          <span class="avatar-pill" style="background: ${a.avatarColor}; width: 18px; height: 18px; font-size: 0.58rem;" title="${escapeHtml(a.name)}">
+                            ${a.name.split(' ').map(n=>n[0]).join('')}
+                          </span>
+                        `).join('')}
+                      </div>
+                      <span class="gantt-group-title" title="${escapeHtml(row.assigneeInfo.fullLabel || row.assigneeInfo.label)}">
+                        ${escapeHtml(row.assigneeInfo.label)}
+                      </span>
+                      <div class="gantt-group-meta">
+                        <span class="badge" style="font-size: 0.66rem; background: rgba(148, 163, 184, 0.15); color: #cbd5e1;">
+                          ${row.tasks.length}
+                        </span>
+                        <span style="font-family: var(--font-mono); color: #93c5fd; font-size: 0.72rem;">
+                          ${row.totalHours}h
+                        </span>
+                      </div>
+                    </div>
+                  `;
+                }
+
+                // Normal task row
+                const task = row.task;
                 const proj = projectMap.get(task.projectId);
+                const ids = Array.isArray(task.assignedResourceIds) && task.assignedResourceIds.length > 0
+                  ? task.assignedResourceIds
+                  : (task.assignedResourceId ? [task.assignedResourceId] : []);
+                const assignees = ids.map(id => resourceMap.get(id)).filter(Boolean);
+
                 return `
-                  <div class="gantt-tree-row" data-task-id="${task.id}" id="tree-row-${task.id}">
-                    <span style="font-family: var(--font-mono); color: var(--text-muted); font-size: 0.72rem;">${idx + 1}</span>
+                  <div class="gantt-tree-row level-${row.level}" data-task-id="${task.id}" id="tree-row-${task.id}">
+                    <span style="font-family: var(--font-mono); color: var(--text-muted); font-size: 0.72rem;">${row.index}</span>
                     <div class="gantt-tree-title">
                       <span class="project-color-dot" style="background: ${proj?.color || '#6366f1'};"></span>
                       <span title="${escapeHtml(task.title)}">${escapeHtml(task.title)}</span>
                       ${task.isTargetMissed ? `<span title="Target deadline missed by ${task.targetDiffDays} day(s)!" style="margin-left: 4px; font-size: 0.72rem; cursor: help;">⚠️</span>` : ''}
                     </div>
                     <div class="gantt-tree-assignee">
-                      ${(() => {
-                        const ids = Array.isArray(task.assignedResourceIds) && task.assignedResourceIds.length > 0
-                          ? task.assignedResourceIds
-                          : (task.assignedResourceId ? [task.assignedResourceId] : []);
-                        const assignees = ids.map(id => resourceMap.get(id)).filter(Boolean);
-                        if (assignees.length === 0) {
-                          return '<span style="color: var(--text-muted); font-style: italic;">Unassigned</span>';
-                        }
-                        if (assignees.length === 1) {
-                          const r = assignees[0];
-                          return `
-                            <span class="avatar-pill" style="background: ${r.avatarColor}; width: 20px; height: 20px; font-size: 0.62rem;">
-                              ${r.name.split(' ').map(n=>n[0]).join('')}
-                            </span>
-                            <span style="overflow: hidden; text-overflow: ellipsis;">${escapeHtml(r.name.split(' ')[0])}</span>
-                          `;
-                        }
-                        return `
-                          <div style="display: flex; align-items: center;" title="${assignees.map(a => a.name).join(', ')}">
-                            <div style="display: flex; margin-right: 0.3rem;">
-                              ${assignees.slice(0, 3).map((r, i) => `
-                                <span class="avatar-pill" style="background: ${r.avatarColor}; width: 18px; height: 18px; font-size: 0.58rem; margin-left: ${i > 0 ? '-6px' : '0'}; border: 1.5px solid var(--bg-surface);" title="${escapeHtml(r.name)}">
-                                  ${r.name.split(' ').map(n=>n[0]).join('')}
-                                </span>
-                              `).join('')}
-                            </div>
-                            <span style="font-size: 0.72rem; font-weight: 600; color: var(--accent-primary);">${assignees.length}p</span>
-                          </div>
-                        `;
-                      })()}
+                      ${renderAssigneesPill(assignees)}
                     </div>
                     <div class="gantt-tree-effort">${task.durationHours}h</div>
                   </div>
@@ -226,7 +514,7 @@ export class GanttView {
             </div>
 
             <!-- Timeline Content with Grid & Task Bars -->
-            <div class="gantt-timeline-content" style="width: ${timelineWidth}px; height: ${scheduledTasks.length * this.rowHeight}px;">
+            <div class="gantt-timeline-content" style="width: ${timelineWidth}px; height: ${totalTimelineHeight}px;">
               <!-- Background Vertical Grid -->
               <div class="gantt-grid-columns">
                 ${days.map(d => `
@@ -236,7 +524,7 @@ export class GanttView {
               </div>
 
               <!-- SVG Connectors Overlay -->
-              <svg class="gantt-svg-overlay" id="ganttSvgOverlay" style="width: ${timelineWidth}px; height: ${scheduledTasks.length * this.rowHeight}px;">
+              <svg class="gantt-svg-overlay" id="ganttSvgOverlay" style="width: ${timelineWidth}px; height: ${totalTimelineHeight}px;">
                 <defs>
                   <!-- Standard Dependency Arrow -->
                   <marker id="depArrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -252,23 +540,56 @@ export class GanttView {
 
               <!-- Timeline Bars Rows -->
               <div class="gantt-timeline-rows">
-                ${scheduledTasks.map((task, rowIdx) => {
-                  const dayMs = 1000 * 60 * 60 * 24;
+                ${displayRows.map((row) => {
+                  if (row.type === 'project-header') {
+                    const startOffsetDays = Math.max(0, (row.minStart - minDate) / dayMs);
+                    const endOffsetDays = Math.max(startOffsetDays + 1, (row.maxEnd - minDate) / dayMs + 1);
+                    const barLeft = Math.round(startOffsetDays * this.colWidth);
+                    const barWidth = Math.max(32, Math.round((endOffsetDays - startOffsetDays) * this.colWidth));
+                    const projColor = row.project.color || '#6366f1';
+
+                    return `
+                      <div class="gantt-group-timeline-row gantt-project-timeline-row" style="height: ${this.projectHeaderHeight}px;">
+                        <div class="gantt-project-summary-bar" 
+                             style="left: ${barLeft}px; width: ${barWidth}px; --proj-color: ${projColor}; background: linear-gradient(90deg, ${projColor}, ${projColor}dd);"
+                             title="Project Summary: ${escapeHtml(row.project.name)} (${row.tasks.length} tasks • ${row.totalHours}h effort)">
+                          <span class="gantt-summary-label">${escapeHtml(row.project.name)} (${row.tasks.length} tasks • ${row.totalHours}h)</span>
+                        </div>
+                      </div>
+                    `;
+                  }
+
+                  if (row.type === 'assignee-header') {
+                    const startOffsetDays = Math.max(0, (row.minStart - minDate) / dayMs);
+                    const endOffsetDays = Math.max(startOffsetDays + 1, (row.maxEnd - minDate) / dayMs + 1);
+                    const barLeft = Math.round(startOffsetDays * this.colWidth);
+                    const barWidth = Math.max(28, Math.round((endOffsetDays - startOffsetDays) * this.colWidth));
+
+                    return `
+                      <div class="gantt-group-timeline-row gantt-assignee-timeline-row" style="height: ${this.assigneeHeaderHeight}px;">
+                        <div class="gantt-assignee-summary-bar" 
+                             style="left: ${barLeft}px; width: ${barWidth}px;"
+                             title="${escapeHtml(row.assigneeInfo.fullLabel || row.assigneeInfo.label)}: ${row.tasks.length} subtask(s) • ${row.totalHours}h">
+                          <span>${escapeHtml(row.assigneeInfo.label)} • ${row.totalHours}h</span>
+                        </div>
+                      </div>
+                    `;
+                  }
+
+                  // Normal Task Row
+                  const task = row.task;
                   const startOffsetDays = Math.max(0, (task.computedStartDate - minDate) / dayMs);
                   const endOffsetDays = Math.max(startOffsetDays + 1, (task.computedEndDate - minDate) / dayMs + 1);
                   const barLeft = Math.round(startOffsetDays * this.colWidth);
                   const barWidth = Math.max(28, Math.round((endOffsetDays - startOffsetDays) * this.colWidth));
-                  const topPos = rowIdx * this.rowHeight + 8;
                   const proj = projectMap.get(task.projectId);
                   const barColor = proj?.color || '#6366f1';
-                  const res = resourceMap.get(task.assignedResourceId);
 
                   return `
                     <div class="gantt-bar-row" style="height: ${this.rowHeight}px;" data-row-id="${task.id}">
                       <div class="gantt-task-bar ${task.isCritical ? 'critical-path' : ''} ${task.isTargetMissed ? 'target-missed-bar' : ''}" 
                            id="task-bar-${task.id}"
                            data-task-id="${task.id}"
-                           data-row-idx="${rowIdx}"
                            style="left: ${barLeft}px; width: ${barWidth}px; top: 8px; background: ${barColor};"
                            title="${escapeHtml(task.title)}">
                         <!-- Progress Fill Layer -->
@@ -293,13 +614,44 @@ export class GanttView {
     document.getElementById('scaleDayBtn')?.addEventListener('click', () => this.setScale('day'));
     document.getElementById('scaleWeekBtn')?.addEventListener('click', () => this.setScale('week'));
 
-    // Bind synchronized scrolling between left tree and right timeline
+    // Bind group by select dropdown
+    const groupBySelect = document.getElementById('ganttGroupBySelect');
+    groupBySelect?.addEventListener('change', (e) => {
+      this.setGroupBy(e.target.value);
+    });
+
+    // Bind collapse / expand clicks on group headers
+    this.container.querySelectorAll('.gantt-group-header-row').forEach(header => {
+      header.addEventListener('click', () => {
+        const gId = header.getAttribute('data-group-id');
+        if (gId) this.toggleGroupCollapse(gId);
+      });
+    });
+
+    // Bidirectional synchronized scrolling between left tree and right timeline
     const treeBody = document.getElementById('ganttTreeBody');
     const timelinePane = document.getElementById('ganttTimelinePane');
 
-    timelinePane?.addEventListener('scroll', () => {
-      if (treeBody) treeBody.scrollTop = timelinePane.scrollTop;
-    });
+    if (timelinePane && treeBody) {
+      let isSyncingTimeline = false;
+      let isSyncingTree = false;
+
+      timelinePane.addEventListener('scroll', () => {
+        if (!isSyncingTimeline) {
+          isSyncingTree = true;
+          treeBody.scrollTop = timelinePane.scrollTop;
+          isSyncingTree = false;
+        }
+      });
+
+      treeBody.addEventListener('scroll', () => {
+        if (!isSyncingTree) {
+          isSyncingTimeline = true;
+          timelinePane.scrollTop = treeBody.scrollTop;
+          isSyncingTimeline = false;
+        }
+      });
+    }
 
     // Draw SVG dependency arrows
     this.drawDependencies(scheduledTasks, minDate);
@@ -384,7 +736,6 @@ export class GanttView {
         });
 
         // Show Tooltip
-        const res = resourceMap.get(task.assignedResourceId);
         const proj = projectMap.get(task.projectId);
         const depsCount = task.dependencies ? task.dependencies.length : 0;
 
@@ -427,6 +778,12 @@ export class GanttView {
             <span>Effort:</span>
             <span class="tooltip-val" style="color: #93c5fd;">${task.durationHours} Man-Hours</span>
           </div>
+          ${task.dailyBurnHours ? `
+            <div class="tooltip-row">
+              <span>Leveled Pace:</span>
+              <span class="tooltip-val" style="color: #fbbf24; font-weight: 600;">⚡ ${task.dailyBurnHours}h/day (Leveled)</span>
+            </div>
+          ` : ''}
           <div class="tooltip-row">
             <span>Duration:</span>
             <span class="tooltip-val">${task.durationDays} Working Days</span>

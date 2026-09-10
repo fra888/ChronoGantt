@@ -448,14 +448,20 @@ export class ScheduleEngine {
       const curr = new Date(earliestPossibleStart);
       let loopCount = 0;
 
+      // Optional daily pacing/burn limit set by solver or user
+      const dailyPaceLimit = (typeof task.dailyBurnHours === 'number' && task.dailyBurnHours > 0)
+        ? task.dailyBurnHours
+        : 0;
+
       while (remainingHours > 0 && loopCount < 1825) {
         loopCount++;
         let hoursBurnedToday = 0;
 
         if (assignedTeamInfo.length > 0) {
+          let teamCapacityToday = 0;
           assignedTeamInfo.forEach(({ dailyCapacity, effectiveCal, resource }) => {
             if (this.isWorkingDay(curr, effectiveCal)) {
-              hoursBurnedToday += dailyCapacity;
+              teamCapacityToday += dailyCapacity;
             } else {
               const dateKey = this.toDateKey(curr);
               const holiday = effectiveCal?.holidays?.find(h => h.date === dateKey);
@@ -468,9 +474,14 @@ export class ScheduleEngine {
               }
             }
           });
+          if (teamCapacityToday > 0) {
+            hoursBurnedToday = dailyPaceLimit > 0
+              ? Math.min(teamCapacityToday, dailyPaceLimit)
+              : teamCapacityToday;
+          }
         } else {
           if (this.isWorkingDay(curr, calendar)) {
-            hoursBurnedToday = 8;
+            hoursBurnedToday = dailyPaceLimit > 0 ? Math.min(8, dailyPaceLimit) : 8;
           } else {
             const dateKey = this.toDateKey(curr);
             const holiday = calendar?.holidays?.find(h => h.date === dateKey);
@@ -553,7 +564,27 @@ export class ScheduleEngine {
       taskMap.set(task.id, task);
     });
 
-    return Array.from(taskMap.values());
+    // Group tasks project by project, preserving topological order within each project
+    const topologicalOrder = new Map();
+    sortedTasks.forEach((t, idx) => topologicalOrder.set(t.id, idx));
+
+    const projectOrder = new Map();
+    if (Array.isArray(projects) && projects.length > 0) {
+      projects.forEach((p, idx) => projectOrder.set(p.id, idx));
+    }
+
+    const scheduledList = Array.from(taskMap.values());
+    scheduledList.sort((a, b) => {
+      const pA = projectOrder.has(a.projectId) ? projectOrder.get(a.projectId) : 9999;
+      const pB = projectOrder.has(b.projectId) ? projectOrder.get(b.projectId) : 9999;
+      if (pA !== pB) return pA - pB;
+
+      const tA = topologicalOrder.get(a.id) ?? 9999;
+      const tB = topologicalOrder.get(b.id) ?? 9999;
+      return tA - tB;
+    });
+
+    return scheduledList;
   }
 
   /**
@@ -663,6 +694,13 @@ export class ScheduleEngine {
           if (pAlloc && pAlloc.hoursPerDay > 0) {
             resourceDailyRate = pAlloc.hoursPerDay;
           }
+        }
+
+        // When task is paced / extended over multiple working days, distribute the daily hours evenly
+        const taskDurationDays = task.durationDays || (task.computedStartDate && task.computedEndDate ? Math.max(1, this.countWorkingDays(task.computedStartDate, task.computedEndDate, effectiveCal)) : 1);
+        if (taskDurationDays > 0 && resourceTaskShare > 0) {
+          const spreadDailyRate = Math.round((resourceTaskShare / taskDurationDays) * 10) / 10;
+          resourceDailyRate = Math.min(resourceDailyRate, spreadDailyRate);
         }
 
         totalAllocatedHours += resourceTaskShare;
@@ -832,5 +870,189 @@ export class ScheduleEngine {
         projectAllocationInfo
       };
     });
+  }
+
+  /**
+   * Auto-Solve and Level Schedule:
+   * Extends task end dates to reach project & task deadlines,
+   * pacing daily burn to prevent any resource from exceeding 100% daily capacity,
+   * and ensuring zero missed deadlines.
+   *
+   * @param {Array} tasks 
+   * @param {Array} resources 
+   * @param {Array} projects 
+   * @param {Object} calendar 
+   * @param {Array} allCalendars 
+   * @returns {Object} { tasks, projects, stats }
+   */
+  static solveSchedule(tasks, resources = [], projects = [], calendar = null, allCalendars = []) {
+    if (!tasks || tasks.length === 0) {
+      return { tasks: [], projects, stats: { tasksSolved: 0, deadlinesExtended: 0 } };
+    }
+
+    const clonedTasks = JSON.parse(JSON.stringify(tasks));
+    const clonedProjects = JSON.parse(JSON.stringify(projects));
+
+    const resourceMap = new Map(resources.map(r => [r.id, r]));
+    const projectMap = new Map(clonedProjects.map(p => [p.id, p]));
+
+    // Group tasks by project
+    const projectTaskMap = new Map();
+    clonedTasks.forEach(t => {
+      if (!projectTaskMap.has(t.projectId)) {
+        projectTaskMap.set(t.projectId, []);
+      }
+      projectTaskMap.get(t.projectId).push(t);
+    });
+
+    let totalTasksSolved = 0;
+    let totalDeadlinesExtended = 0;
+
+    projectTaskMap.forEach((projTasks, projId) => {
+      const proj = projectMap.get(projId);
+      if (!proj) return;
+
+      let projStart = proj.startDate ? new Date(proj.startDate) : new Date();
+      projStart.setHours(0, 0, 0, 0);
+
+      const sorted = this.topologicalSort(projTasks);
+      const taskObjMap = new Map(sorted.map(t => [t.id, t]));
+
+      // 1. Calculate minimum required working days at full capacity for each task
+      const minDaysMap = new Map();
+      sorted.forEach(t => {
+        const assignedIds = Array.isArray(t.assignedResourceIds) && t.assignedResourceIds.length > 0
+          ? t.assignedResourceIds
+          : (t.assignedResourceId ? [t.assignedResourceId] : []);
+        const assignedRes = assignedIds.map(id => resourceMap.get(id)).filter(Boolean);
+        const teamCap = assignedRes.reduce((s, r) => s + (Number(r.capacityHoursPerDay) || 8), 0) || 8;
+        const durHours = Math.max(1, Number(t.durationHours) || 8);
+        const minDays = Math.max(1, Math.ceil(durHours / teamCap));
+        minDaysMap.set(t.id, minDays);
+      });
+
+      // 2. Forward pass: compute earliest finish days along the dependency graph
+      const esDaysMap = new Map();
+      const efDaysMap = new Map();
+      sorted.forEach(t => {
+        const deps = (t.dependencies || []).filter(depId => taskObjMap.has(depId));
+        let maxDepEf = 0;
+        deps.forEach(depId => {
+          maxDepEf = Math.max(maxDepEf, efDaysMap.get(depId) || 0);
+        });
+        esDaysMap.set(t.id, maxDepEf);
+        efDaysMap.set(t.id, maxDepEf + (minDaysMap.get(t.id) || 1));
+      });
+
+      const criticalPathMinDays = Math.max(1, ...Array.from(efDaysMap.values()));
+
+      // 3. Project target deadline verification
+      let projDeadline = proj.targetDate ? new Date(proj.targetDate) : null;
+      let availWorkingDays = projDeadline ? this.countWorkingDays(projStart, projDeadline, calendar) : 0;
+
+      if (!projDeadline || availWorkingDays < criticalPathMinDays + 2) {
+        const targetWorkingDays = Math.max(criticalPathMinDays + 5, Math.round(criticalPathMinDays * 1.8));
+        projDeadline = this.addWorkDays(projStart, targetWorkingDays, calendar);
+        proj.targetDate = this.toDateKey(projDeadline);
+        availWorkingDays = this.countWorkingDays(projStart, projDeadline, calendar);
+        totalDeadlinesExtended++;
+      }
+
+      // 4. Calculate timeline expansion ratio
+      const expansionRatio = Math.max(1.0, (availWorkingDays - 1) / criticalPathMinDays);
+
+      // 5. Identify critical path tasks
+      const criticalTaskIds = new Set();
+      const maxEf = Math.max(...Array.from(efDaysMap.values()));
+      const lfMinMap = new Map();
+      const reverseSorted = [...sorted].reverse();
+      const successorsMap = new Map();
+      sorted.forEach(t => successorsMap.set(t.id, []));
+      sorted.forEach(t => {
+        if (Array.isArray(t.dependencies)) {
+          t.dependencies.forEach(depId => {
+            if (successorsMap.has(depId)) {
+              successorsMap.get(depId).push(t.id);
+            }
+          });
+        }
+      });
+
+      reverseSorted.forEach(t => {
+        const succs = successorsMap.get(t.id) || [];
+        if (succs.length === 0) {
+          lfMinMap.set(t.id, maxEf);
+        } else {
+          const minSuccLs = Math.min(...succs.map(sId => (lfMinMap.get(sId) || maxEf) - (minDaysMap.get(sId) || 1)));
+          lfMinMap.set(t.id, minSuccLs);
+        }
+        const slack = (lfMinMap.get(t.id) || maxEf) - (efDaysMap.get(t.id) || 0);
+        if (slack <= 0) {
+          criticalTaskIds.add(t.id);
+        }
+      });
+
+      // Total work hours along the critical chain
+      const criticalChainHours = sorted
+        .filter(t => criticalTaskIds.has(t.id))
+        .reduce((sum, t) => sum + (Number(t.durationHours) || 8), 0) || 1;
+
+      // Allocate extended working days to critical tasks proportionally to fill availWorkingDays
+      let criticalDaysSum = 0;
+      const allocatedDaysMap = new Map();
+
+      sorted.forEach(t => {
+        const durHours = Number(t.durationHours) || 8;
+        if (criticalTaskIds.has(t.id)) {
+          const days = Math.max(2, Math.round(availWorkingDays * (durHours / criticalChainHours)));
+          allocatedDaysMap.set(t.id, days);
+          criticalDaysSum += days;
+        } else {
+          // Parallel branches: scale by expansion ratio
+          const minDays = minDaysMap.get(t.id) || 1;
+          allocatedDaysMap.set(t.id, Math.max(minDays + 1, Math.round(minDays * expansionRatio)));
+        }
+      });
+
+      // Adjust rounding difference on the last critical task so it reaches the project deadline exactly
+      const lastCriticalTask = sorted.filter(t => criticalTaskIds.has(t.id)).pop();
+      if (lastCriticalTask && criticalDaysSum > 0) {
+        const diff = (availWorkingDays - 1) - criticalDaysSum;
+        const current = allocatedDaysMap.get(lastCriticalTask.id) || 2;
+        allocatedDaysMap.set(lastCriticalTask.id, Math.max(2, current + diff));
+      }
+
+      // Calculate daily burn limit for each task
+      sorted.forEach(t => {
+        const durHours = Number(t.durationHours) || 8;
+        const allocatedDays = allocatedDaysMap.get(t.id) || 1;
+        const pace = Math.max(1.0, Math.round((durHours / allocatedDays) * 10) / 10);
+        t.dailyBurnHours = pace;
+      });
+    });
+
+    // 6. Run computeSchedule to get exact simulated dates with working calendars, vacations, and pacing
+    const scheduled = this.computeSchedule(clonedTasks, resources, clonedProjects, calendar, allCalendars);
+    const scheduledMap = new Map(scheduled.map(t => [t.id, t]));
+
+    // 7. Update every task's startDate and targetDate to match the computed leveled dates!
+    clonedTasks.forEach(t => {
+      const st = scheduledMap.get(t.id);
+      if (st && st.computedStartDate && st.computedEndDate) {
+        t.startDate = this.toDateKey(st.computedStartDate);
+        t.targetDate = this.toDateKey(st.computedEndDate);
+        t.isSolved = true;
+        totalTasksSolved++;
+      }
+    });
+
+    return {
+      tasks: clonedTasks,
+      projects: clonedProjects,
+      stats: {
+        tasksSolved: totalTasksSolved,
+        deadlinesExtended: totalDeadlinesExtended
+      }
+    };
   }
 }

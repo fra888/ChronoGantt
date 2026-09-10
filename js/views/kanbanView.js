@@ -80,6 +80,11 @@ export class KanbanView {
                             🎯 ${task.targetDate} ${task.isTargetMissed ? '⚠️' : ''}
                           </span>
                         ` : ''}
+                        ${task.dailyBurnHours ? `
+                          <span class="man-hours-pill" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3);" title="Leveled Daily Pace">
+                            ⚡ ${task.dailyBurnHours}h/d
+                          </span>
+                        ` : ''}
                         ${task.dependencies && task.dependencies.length > 0 ? `
                           <span class="dep-indicator ${hasIncompleteDeps ? 'dep-warning' : ''}" 
                                 style="${hasIncompleteDeps ? 'background: rgba(239, 68, 68, 0.15); color: #f87171;' : ''}"

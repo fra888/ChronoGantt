@@ -2,6 +2,7 @@
  * Data Store & State Management
  * Persistent with localStorage, pre-seeded with rich demo projects & resources
  */
+import { ScheduleEngine } from './engine.js';
 
 const STORAGE_KEY = 'PROJECT_MANAGEMENT_APP_STATE_V1';
 
@@ -390,6 +391,9 @@ export class AppStore {
               if (typeof t.targetDate === 'undefined' || t.targetDate === null) {
                 t.targetDate = '';
               }
+              if (typeof t.dailyBurnHours !== 'number') {
+                t.dailyBurnHours = Number(t.dailyBurnHours) || 0;
+              }
               if (!Array.isArray(t.assignedResourceIds)) {
                 t.assignedResourceIds = t.assignedResourceId ? [t.assignedResourceId] : [];
               }
@@ -469,6 +473,17 @@ export class AppStore {
         (t.description && t.description.toLowerCase().includes(q))
       );
     }
+
+    // Group tasks project by project according to the workspace projects list
+    const projectOrder = new Map();
+    (this.state.projects || []).forEach((p, idx) => projectOrder.set(p.id, idx));
+
+    filtered.sort((a, b) => {
+      const pA = projectOrder.has(a.projectId) ? projectOrder.get(a.projectId) : 9999;
+      const pB = projectOrder.has(b.projectId) ? projectOrder.get(b.projectId) : 9999;
+      return pA - pB;
+    });
+
     return filtered;
   }
 
@@ -614,6 +629,7 @@ export class AppStore {
       durationHours: Math.max(1, Number(task.durationHours) || 8),
       startDate: task.startDate || new Date().toISOString().split('T')[0],
       targetDate: task.targetDate ? String(task.targetDate).trim() : '',
+      dailyBurnHours: Number(task.dailyBurnHours) || 0,
       status: task.status || 'todo',
       progress: Number(task.progress) || 0,
       dependencies: Array.isArray(task.dependencies) ? task.dependencies : []
@@ -629,6 +645,9 @@ export class AppStore {
       const merged = { ...this.state.tasks[idx], ...updates };
       if (updates.targetDate !== undefined) {
         merged.targetDate = updates.targetDate ? String(updates.targetDate).trim() : '';
+      }
+      if (updates.dailyBurnHours !== undefined) {
+        merged.dailyBurnHours = Number(updates.dailyBurnHours) || 0;
       }
       if (Array.isArray(merged.assignedResourceIds)) {
         merged.assignedResourceId = merged.assignedResourceIds[0] || null;
@@ -665,6 +684,76 @@ export class AppStore {
       }
     });
     this.saveState();
+  }
+
+  // Schedule Solver & Revert
+  solveSchedule() {
+    // 1. Save pre-solve backup snapshot
+    this.solveBackup = {
+      tasks: JSON.parse(JSON.stringify(this.state.tasks)),
+      projects: JSON.parse(JSON.stringify(this.state.projects))
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY + '_SOLVE_BACKUP', JSON.stringify(this.solveBackup));
+    } catch (e) {
+      console.warn('Could not save solve backup to localStorage', e);
+    }
+
+    // 2. Solve schedule with ScheduleEngine
+    const calendar = this.getCalendar();
+    const allCalendars = this.getAllCalendars();
+    const result = ScheduleEngine.solveSchedule(
+      this.state.tasks,
+      this.state.resources,
+      this.state.projects,
+      calendar,
+      allCalendars
+    );
+
+    this.state.tasks = result.tasks;
+    if (Array.isArray(result.projects)) {
+      this.state.projects = result.projects;
+    }
+    this.saveState();
+    return result;
+  }
+
+  hasSolveBackup() {
+    if (this.solveBackup && Array.isArray(this.solveBackup.tasks) && this.solveBackup.tasks.length > 0) {
+      return true;
+    }
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY + '_SOLVE_BACKUP');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed?.tasks) && parsed.tasks.length > 0;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  revertSchedule() {
+    let backup = this.solveBackup;
+    if (!backup) {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY + '_SOLVE_BACKUP');
+        if (saved) backup = JSON.parse(saved);
+      } catch (e) {}
+    }
+
+    if (backup && Array.isArray(backup.tasks)) {
+      this.state.tasks = JSON.parse(JSON.stringify(backup.tasks));
+      if (Array.isArray(backup.projects)) {
+        this.state.projects = JSON.parse(JSON.stringify(backup.projects));
+      }
+      this.solveBackup = null;
+      try {
+        localStorage.removeItem(STORAGE_KEY + '_SOLVE_BACKUP');
+      } catch (e) {}
+      this.saveState();
+      return true;
+    }
+    return false;
   }
 
   // Calendar Multi-Profile CRUD & Preset Helpers
@@ -936,6 +1025,7 @@ export class AppStore {
           durationHours: Math.max(1, Number(t.durationHours) || 8),
           startDate: t.startDate || new Date().toISOString().split('T')[0],
           targetDate: t.targetDate ? String(t.targetDate).trim() : '',
+          dailyBurnHours: Number(t.dailyBurnHours) || 0,
           status: t.status || 'todo',
           progress: Number(t.progress) || 0,
           dependencies: Array.isArray(t.dependencies) ? t.dependencies : []

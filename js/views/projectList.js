@@ -164,9 +164,16 @@ export class ProjectListView {
                     ` : '<span style="color: var(--text-muted); font-style: italic; font-size: 0.75rem;">None</span>'}
                   </td>
                   <td>
-                    <span class="man-hours-pill">
-                      ⏱ ${task.durationHours} Man-Hours
-                    </span>
+                    <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+                      <span class="man-hours-pill">
+                        ⏱ ${task.durationHours} Man-Hours
+                      </span>
+                      ${task.dailyBurnHours ? `
+                        <span style="font-size: 0.7rem; color: #fbbf24; font-weight: 600;">
+                          ⚡ ${task.dailyBurnHours}h/day pace
+                        </span>
+                      ` : ''}
+                    </div>
                   </td>
                   <td>
                     ${depNames.length > 0 ? `

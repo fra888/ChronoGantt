@@ -2,19 +2,19 @@
  * Main Application Controller (ChronoGantt)
  * Initializes store, routing, KPI summaries, and view orchestrations
  */
-import { AppStore } from './store.js';
-import { ScheduleEngine } from './engine.js';
-import { GanttView } from './views/ganttView.js';
-import { KanbanView } from './views/kanbanView.js';
-import { WorkloadView } from './views/workloadView.js';
-import { GraphView } from './views/graphView.js';
-import { ProjectListView } from './views/projectList.js';
-import { CalendarView } from './views/calendarView.js';
+import { AppStore } from './store.js?v=2';
+import { ScheduleEngine } from './engine.js?v=2';
+import { GanttView } from './views/ganttView.js?v=2';
+import { KanbanView } from './views/kanbanView.js?v=2';
+import { WorkloadView } from './views/workloadView.js?v=2';
+import { GraphView } from './views/graphView.js?v=2';
+import { ProjectListView } from './views/projectList.js?v=2';
+import { CalendarView } from './views/calendarView.js?v=2';
 
-import { TaskModal } from './components/taskModal.js';
-import { ResourceModal } from './components/resourceModal.js';
-import { ProjectModal } from './components/projectModal.js';
-import { MessagesCenter } from './components/messagesCenter.js';
+import { TaskModal } from './components/taskModal.js?v=2';
+import { ResourceModal } from './components/resourceModal.js?v=2';
+import { ProjectModal } from './components/projectModal.js?v=2';
+import { MessagesCenter } from './components/messagesCenter.js?v=2';
 
 class ChronoGanttApp {
   constructor() {
@@ -28,6 +28,7 @@ class ChronoGanttApp {
     this.renderSidebarProjects();
     this.updateHeaderFilters();
     this.updateKPIs();
+    this.updateSolveRevertButtons();
     this.switchView('gantt');
 
     // Subscribe to state updates
@@ -35,6 +36,7 @@ class ChronoGanttApp {
       this.renderSidebarProjects();
       this.updateHeaderFilters();
       this.updateKPIs();
+      this.updateSolveRevertButtons();
       this.messagesCenter?.update();
       this.renderCurrentView();
     });
@@ -233,6 +235,41 @@ class ChronoGanttApp {
         this.showToast('Reset to demo dataset', 'info');
       }
     });
+
+    // Auto-Solve Schedule Button
+    document.getElementById('btnSolveSchedule')?.addEventListener('click', () => {
+      const result = this.store.solveSchedule();
+      this.updateSolveRevertButtons();
+      this.renderCurrentView();
+      this.messagesCenter?.update();
+      this.updateKPIs();
+      const extNote = result.stats.deadlinesExtended > 0 ? ` (auto-adjusted ${result.stats.deadlinesExtended} project deadline)` : '';
+      this.showToast(
+        `✨ Schedule Solved! Leveled ${result.stats.tasksSolved} subtasks to reach deadlines with 0 over-allocations${extNote}.`,
+        'success'
+      );
+    });
+
+    // Revert Schedule Button
+    document.getElementById('btnRevertSchedule')?.addEventListener('click', () => {
+      if (confirm('Revert schedule back to the original dates and pacing before Solve?')) {
+        const reverted = this.store.revertSchedule();
+        if (reverted) {
+          this.updateSolveRevertButtons();
+          this.renderCurrentView();
+          this.messagesCenter?.update();
+          this.updateKPIs();
+          this.showToast('Schedule reverted to pre-solve state', 'info');
+        }
+      }
+    });
+  }
+
+  updateSolveRevertButtons() {
+    const btnRevert = document.getElementById('btnRevertSchedule');
+    if (btnRevert) {
+      btnRevert.style.display = this.store.hasSolveBackup() ? 'inline-flex' : 'none';
+    }
   }
 
   switchView(viewId) {
